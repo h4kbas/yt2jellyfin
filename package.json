@@ -1,0 +1,44 @@
+{
+  "name": "yt2jellyfin",
+  "version": "0.1.0",
+  "description": "Paste a YouTube URL, download MP3, clean tags, upload to Jellyfin",
+  "type": "module",
+  "bin": {
+    "yt2jellyfin": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx src/index.tsx",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "ink": "^8.0.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  },
+  "author": "h4kbas",
+  "keywords": [
+    "jellyfin",
+    "youtube",
+    "yt-dlp",
+    "mp3",
+    "tui",
+    "ink",
+    "cli"
+  ],
+  "files": [
+    "dist"
+  ]
+}
