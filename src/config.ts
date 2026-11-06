@@ -31,19 +31,36 @@ const ENV_OVERRIDES: Record<string, keyof Config> = {
   YTJ_FFMPEG: 'ffmpegPath',
 };
 
-export type LoadedConfig = { config: Config; path: string; created: boolean };
+export type LoadedConfig = {
+  config: Config;
+  path: string;
+  // no config file yet (or unreadable one): the TUI has to ask for the values
+  needsSetup: boolean;
+};
+
+export function saveConfig(config: Config): void {
+  mkdirSync(dirname(CONFIG_PATH), { recursive: true });
+  mkdirSync(config.downloadDir, { recursive: true });
+  writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + '\n');
+  chmodSync(CONFIG_PATH, 0o600);
+}
 
 export function loadConfig(): LoadedConfig {
-  let created = false;
+  let needsSetup = false;
+  let stored: Partial<Config> = {};
 
   if (!existsSync(CONFIG_PATH)) {
-    mkdirSync(dirname(CONFIG_PATH), { recursive: true });
-    writeFileSync(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2) + '\n');
-    chmodSync(CONFIG_PATH, 0o600);
-    created = true;
+    needsSetup = true;
+  } else {
+    try {
+      stored = JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) as Partial<Config>;
+    } catch {
+      // broken/empty config: ask again with defaults instead of crashing
+      stored = {};
+      needsSetup = true;
+    }
   }
 
-  const stored = JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) as Partial<Config>;
   const config: Config = { ...DEFAULT_CONFIG, ...stored };
 
   for (const [envKey, configKey] of Object.entries(ENV_OVERRIDES)) {
@@ -53,7 +70,5 @@ export function loadConfig(): LoadedConfig {
     }
   }
 
-  mkdirSync(config.downloadDir, { recursive: true });
-
-  return { config, path: CONFIG_PATH, created };
+  return { config, path: CONFIG_PATH, needsSetup };
 }

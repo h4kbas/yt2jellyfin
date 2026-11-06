@@ -25,11 +25,13 @@ pnpm dev
 pnpm build && node dist/index.js
 ```
 
+First run opens a setup screen with prefilled defaults (jellyfin url, upload dir, yt-dlp/ffmpeg paths); enter through the fields and it writes the config. A missing or broken config file shows the same screen again.
+
 Flow: `enter` adds a url, `enter` on an empty line downloads all, then each track opens a review box. `tab`/`shift+tab` move between fields, `enter` on the last field saves tags and uploads, `esc` skips. When the queue empties the library refresh is triggered.
 
 ## Config
 
-Created on first run at `~/.config/yt2jellyfin/config.json` (mode 600).
+Asked in the TUI on first run, saved to `~/.config/yt2jellyfin/config.json` (mode 600). Values below are the defaults the setup screen prefills.
 
 ```json
 {

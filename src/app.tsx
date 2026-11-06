@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { useEffect } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
-import { loadConfig } from './config.js';
+import { loadConfig, saveConfig, type Config } from './config.js';
 import { downloadTrack, type TrackMeta } from './ytdlp.js';
 import { applyTags } from './media.js';
 import { refreshLibrary, uploadToServer } from './jellyfin.js';
@@ -24,7 +24,16 @@ type Item = Fields & {
   error?: string;
 };
 
-type Phase = 'urls' | 'downloading' | 'review' | 'done';
+type Phase = 'setup' | 'urls' | 'downloading' | 'review' | 'done';
+
+const SETUP_FIELDS: { key: keyof Config; label: string; secret?: boolean }[] = [
+  { key: 'jellyfinUrl', label: 'Jellyfin url' },
+  { key: 'jellyfinApiKey', label: 'API key', secret: true },
+  { key: 'jellyfinUploadDir', label: 'Server dir' },
+  { key: 'downloadDir', label: 'Download dir' },
+  { key: 'ytDlpPath', label: 'yt-dlp' },
+  { key: 'ffmpegPath', label: 'ffmpeg' },
+];
 
 const FIELD_ORDER: (keyof Fields)[] = ['title', 'artist', 'album', 'genre'];
 const FIELD_LABELS: Record<keyof Fields, string> = {
@@ -76,10 +85,13 @@ function defaults(meta: TrackMeta, file: string): Fields {
 
 export function App() {
   const loaded = useRef(loadConfig()).current;
-  const cfg = loaded.config;
   const { exit } = useApp();
 
-  const [phase, setPhase] = useState<Phase>('urls');
+  const [config, setConfig] = useState<Config>(loaded.config);
+  const cfg = config;
+  const [phase, setPhase] = useState<Phase>(loaded.needsSetup ? 'setup' : 'urls');
+  const [draft, setDraft] = useState<Config>(loaded.config);
+  const [setupIndex, setSetupIndex] = useState(0);
   const [items, setItems] = useState<Item[]>([]);
   const [input, setInput] = useState('');
   const [message, setMessage] = useState('');
@@ -119,6 +131,47 @@ export function App() {
       })),
     );
     setPhase('downloading');
+  }
+
+  function submitSetup(index: number) {
+    if (index < SETUP_FIELDS.length - 1) {
+      setSetupIndex(index + 1);
+      return;
+    }
+
+    const next: Config = {
+      jellyfinUrl: draft.jellyfinUrl.trim().replace(/\/+$/, ''),
+      jellyfinApiKey: draft.jellyfinApiKey.trim(),
+      jellyfinUploadDir: draft.jellyfinUploadDir.trim(),
+      downloadDir: draft.downloadDir.trim(),
+      ytDlpPath: draft.ytDlpPath.trim() || 'yt-dlp',
+      ffmpegPath: draft.ffmpegPath.trim() || 'ffmpeg',
+    };
+
+    if (!/^https?:\/\//i.test(next.jellyfinUrl)) {
+      setMessage('jellyfin url must start with http:// or https://');
+      setSetupIndex(0);
+      return;
+    }
+    if (next.jellyfinApiKey.length === 0) {
+      setMessage('api key is required');
+      setSetupIndex(1);
+      return;
+    }
+    if (next.jellyfinUploadDir.length === 0 || next.downloadDir.length === 0) {
+      setMessage('upload and download dirs cannot be empty');
+      return;
+    }
+
+    try {
+      saveConfig(next);
+      setConfig(next);
+      setDraft(next);
+      setMessage(`config saved to ${loaded.path}`);
+      setPhase('urls');
+    } catch (error) {
+      setMessage(`could not save config: ${errorMessage(error)}`);
+    }
   }
 
   function submitUrls(value: string) {
@@ -267,6 +320,14 @@ export function App() {
       return;
     }
 
+    if (phase === 'setup') {
+      if (key.tab) {
+        const delta = key.shift ? -1 : 1;
+        setSetupIndex((prev) => (prev + delta + SETUP_FIELDS.length) % SETUP_FIELDS.length);
+      }
+      return;
+    }
+
     if (phase !== 'review') return;
 
     if (key.tab) {
@@ -302,17 +363,40 @@ export function App() {
           {cfg.jellyfinUploadDir}
         </Text>
       </Text>
-      <Text dimColor>
-        config {loaded.path}
-        {loaded.created ? ' (created, edit it for your server)' : ''}
-      </Text>
-      {!cfg.jellyfinApiKey && (
+      <Text dimColor>config {loaded.path}</Text>
+      {phase !== 'setup' && !cfg.jellyfinApiKey && (
         <Text color="yellow">
           jellyfin api key missing: set YTJ_JELLYFIN_API_KEY or edit the config file
         </Text>
       )}
 
-      {phase === 'urls' ? (
+      {phase === 'setup' ? (
+        <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={1}>
+          <Text>first run: check the jellyfin settings, defaults are prefilled</Text>
+          {SETUP_FIELDS.map((field, index) => (
+            <Box key={field.key}>
+              <Box width={15}>
+                <Text color={index === setupIndex ? 'green' : undefined}>{field.label}</Text>
+              </Box>
+              {index === setupIndex ? (
+                <TextInput
+                  value={draft[field.key]}
+                  mask={field.secret ? '*' : undefined}
+                  onChange={(value) => setDraft((prev) => ({ ...prev, [field.key]: value }))}
+                  onSubmit={() => submitSetup(index)}
+                />
+              ) : (
+                <Text dimColor={draft[field.key].length === 0}>
+                  {field.secret && draft[field.key].length > 0
+                    ? '*'.repeat(8)
+                    : draft[field.key] || '-'}
+                </Text>
+              )}
+            </Box>
+          ))}
+          <Text dimColor>tab/shift+tab moves field · enter saves on the last field</Text>
+        </Box>
+      ) : phase === 'urls' ? (
         <Box flexDirection="column" marginTop={1}>
           {items.map((item, index) => (
             <Text key={item.url}>
