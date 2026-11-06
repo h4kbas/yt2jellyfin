@@ -6,23 +6,23 @@ TUI: paste YouTube urls, download as MP3, fix title/artist/album/genre, upload t
 
 Paste the urls:
 
-![paste youtube urls](screenshots/1-urls.png)
+![paste youtube urls](https://raw.githubusercontent.com/h4kbas/yt2jellyfin/master/screenshots/1-urls.png)
 
 Downloads run one at a time with yt-dlp progress:
 
-![downloading with progress](screenshots/2-downloading.png)
+![downloading with progress](https://raw.githubusercontent.com/h4kbas/yt2jellyfin/master/screenshots/2-downloading.png)
 
 Each track opens a tag box, prefilled from yt-dlp metadata:
 
-![review and fix tags](screenshots/3-review.png)
+![review and fix tags](https://raw.githubusercontent.com/h4kbas/yt2jellyfin/master/screenshots/3-review.png)
 
 `enter` on the last field tags and uploads through the plugin:
 
-![uploading](screenshots/4-uploading.png)
+![uploading](https://raw.githubusercontent.com/h4kbas/yt2jellyfin/master/screenshots/4-uploading.png)
 
 When the queue empties the library refresh is triggered:
 
-![done, library scan started](screenshots/5-done.png)
+![done, library scan started](https://raw.githubusercontent.com/h4kbas/yt2jellyfin/master/screenshots/5-done.png)
 
 ## Install
 

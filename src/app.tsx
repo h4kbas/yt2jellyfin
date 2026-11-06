@@ -5,7 +5,9 @@ import TextInput from 'ink-text-input';
 import { loadConfig, saveConfig, type Config } from './config.js';
 import { downloadTrack, type TrackMeta } from './ytdlp.js';
 import { applyTags } from './media.js';
-import { refreshLibrary, tagUploadedFiles, uploadToServer } from './jellyfin.js';
+import { finishUploads, refreshLibrary, uploadToServer } from './jellyfin.js';
+import { loadArtCandidates, toPng, type ArtCandidate } from './artwork.js';
+import { cardGridHeight, clearPreview, drawCardPicker, supportsInlineImages } from './preview.js';
 
 type Status = 'queued' | 'downloading' | 'downloaded' | 'uploading' | 'uploaded' | 'error';
 
@@ -22,9 +24,15 @@ type Item = Fields & {
   progress: string;
   file?: string;
   error?: string;
+  art?: ArtCandidate;
 };
 
 type Phase = 'setup' | 'urls' | 'downloading' | 'review' | 'done';
+
+type ArtCacheEntry = {
+  candidates: ArtCandidate[];
+  pngs: Map<string, Buffer>;
+};
 
 const SETUP_FIELDS: { key: keyof Config; label: string; secret?: boolean }[] = [
   { key: 'jellyfinUrl', label: 'Jellyfin url' },
@@ -83,6 +91,10 @@ function defaults(meta: TrackMeta, file: string): Fields {
   };
 }
 
+function artCacheKey(item: Item): string {
+  return `${item.album.trim().toLowerCase()}\u0000${item.artist.trim().toLowerCase()}`;
+}
+
 export function App() {
   const loaded = useRef(loadConfig()).current;
   const { exit } = useApp();
@@ -98,9 +110,14 @@ export function App() {
   const [reviewIndex, setReviewIndex] = useState(0);
   const [fieldIndex, setFieldIndex] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [artLoading, setArtLoading] = useState(false);
+  const [artCandidates, setArtCandidates] = useState<ArtCandidate[]>([]);
 
   const urlsRef = useRef<string[]>([]);
   const busyRef = useRef(false);
+  const artCacheRef = useRef<Map<string, ArtCacheEntry>>(new Map());
+  const artPngsRef = useRef<Map<string, Buffer>>(new Map());
+  const inlinePreview = useRef(supportsInlineImages()).current;
   // Mirror of the items state kept in a ref so async steps read fresh statuses
   // without waiting for React to commit the last batched update.
   const itemsRef = useRef<Item[]>(items);
@@ -262,13 +279,21 @@ export function App() {
       await refreshLibrary(cfg);
       const tracks = itemsRef.current
         .filter((item) => item.status === 'uploaded' && item.file)
-        .map((item) => ({ file: item.file as string, title: item.title }));
-      const { missed } = await tagUploadedFiles(cfg, tracks);
-      setMessage(
-        missed > 0
-          ? `upload done, library scan started, YouTube tag missed on ${missed}`
-          : 'upload done, YouTube tag added, library scan started',
-      );
+        .map((item) => ({
+          file: item.file as string,
+          title: item.title,
+          art: item.art ?? null,
+        }));
+      const { art, missed } = await finishUploads(cfg, tracks);
+      if (missed > 0) {
+        setMessage(`upload done, library scan started, YouTube tag missed on ${missed}`);
+      } else {
+        setMessage(
+          art > 0
+            ? 'upload done, YouTube tag and album art added, library scan started'
+            : 'upload done, YouTube tag added, library scan started',
+        );
+      }
     } catch (error) {
       setMessage(`upload done, refresh failed: ${errorMessage(error)}`);
     }
@@ -300,7 +325,7 @@ export function App() {
     updateItem(index, { status: 'uploading' });
 
     try {
-      const tagged = await applyTags(cfg, item.file, values);
+      const tagged = await applyTags(cfg, item.file, values, item.art !== undefined);
       updateItem(index, { file: tagged });
       await uploadToServer(cfg, tagged);
       updateItem(index, { status: 'uploaded' });
@@ -315,14 +340,14 @@ export function App() {
   }
 
   function submitField(index: number) {
-    if (index < FIELD_ORDER.length - 1) {
+    if (index < FIELD_ORDER.length) {
       setFieldIndex(index + 1);
     } else {
       void acceptAndUpload();
     }
   }
 
-  useInput((_input, key) => {
+  useInput((input, key) => {
     if (phase === 'done') {
       if (key.return || key.escape) exit();
       return;
@@ -341,8 +366,25 @@ export function App() {
     if (key.tab) {
       const delta = key.shift ? -1 : 1;
       setFieldIndex(
-        (prev) => (prev + delta + FIELD_ORDER.length) % FIELD_ORDER.length,
+        (prev) => (prev + delta + FIELD_ORDER.length + 1) % (FIELD_ORDER.length + 1),
       );
+      return;
+    }
+
+    if (fieldIndex === FIELD_ORDER.length && key.return) {
+      void acceptAndUpload();
+      return;
+    }
+
+    if (fieldIndex === FIELD_ORDER.length && (key.leftArrow || key.rightArrow)) {
+      const item = itemsRef.current[reviewIndex];
+      if (!item || item.status !== 'downloaded' || artCandidates.length === 0) return;
+
+      const total = artCandidates.length + 1;
+      const selected = artCandidates.findIndex((candidate) => candidate.key === item.art?.key);
+      const index = selected === -1 ? artCandidates.length : selected;
+      const next = (index + (key.rightArrow ? 1 : -1) + total) % total;
+      updateItem(reviewIndex, { art: artCandidates[next] });
       return;
     }
 
@@ -358,9 +400,112 @@ export function App() {
   const uploaded = items.filter((item) => item.status === 'uploaded').length;
   const failed = items.filter((item) => item.status === 'error').length;
 
+  const currentTitle = current?.title ?? '';
+  const currentAlbum = current?.album ?? '';
+  const currentArtist = current?.artist ?? '';
+  const apiWarn = phase !== 'setup' && !cfg.jellyfinApiKey ? 1 : 0;
+  // review box top border: header, blank, queue, blank
+  const boxTopRow = 5 + apiWarn + items.length;
+  const showCards =
+    phase === 'review' &&
+    fieldIndex === FIELD_ORDER.length &&
+    current?.status === 'downloaded' &&
+    inlinePreview;
+  const artRows = showCards ? cardGridHeight(artCandidates.length + 1) : 0;
+  const cardsTop = boxTopRow + 7;
+  const cardsFit =
+    showCards && artRows > 0 && cardsTop + artRows - 1 <= (process.stdout.rows ?? 0);
+
+  useEffect(() => {
+    if (phase !== 'review') {
+      setArtCandidates([]);
+      setArtLoading(false);
+      return;
+    }
+
+    const item = itemsRef.current[reviewIndex];
+    if (!item || item.status !== 'downloaded' || !item.file) return;
+
+    const cacheKey = artCacheKey(item);
+    const cached = artCacheRef.current.get(cacheKey);
+    if (cached) {
+      artPngsRef.current = cached.pngs;
+      setArtCandidates(cached.candidates);
+      setArtLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setArtLoading(true);
+    setArtCandidates([]);
+
+    // the album/artist fields may still be typed, wait for them to settle
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const candidates = await loadArtCandidates(cfg, {
+            file: item.file as string,
+            title: item.title,
+            album: item.album,
+            artist: item.artist,
+          });
+          if (cancelled) return;
+
+          const pngs = new Map<string, Buffer>();
+          await Promise.all(
+            candidates.map(async (candidate) => {
+              try {
+                pngs.set(candidate.key, await toPng(cfg.ffmpegPath, candidate.bytes, 200));
+              } catch {
+                // card falls back to a placeholder
+              }
+            }),
+          );
+          if (cancelled) return;
+
+          artCacheRef.current.set(cacheKey, { candidates, pngs });
+          artPngsRef.current = pngs;
+          setArtCandidates(candidates);
+        } catch {
+          // keep the empty card selectable
+        } finally {
+          if (!cancelled) setArtLoading(false);
+        }
+      })();
+    }, 600);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [phase, reviewIndex, currentTitle, currentAlbum, currentArtist, cfg.ffmpegPath]);
+
+  // Ink repaints the whole frame on every keystroke, so redraw the cards after it
+  useEffect(() => {
+    if (!cardsFit) {
+      clearPreview();
+      return;
+    }
+
+    const item = itemsRef.current[reviewIndex];
+    if (!item || item.status !== 'downloaded') return;
+
+    const cards = artCandidates.map((candidate) => ({
+      key: candidate.key,
+      label: candidate.label,
+      png: artPngsRef.current.get(candidate.key),
+    }));
+    cards.push({ key: 'none', label: 'No picture', png: undefined });
+
+    const selected = artCandidates.findIndex((candidate) => candidate.key === item.art?.key);
+    drawCardPicker(cards, selected === -1 ? artCandidates.length : selected, cardsTop);
+  });
+
+  useEffect(() => () => clearPreview(), []);
+
   return (
     <Box flexDirection="column" paddingX={1}>
-      <Text>
+      <Text wrap="truncate-end">
         <Text bold color="cyan">
           yt2jellyfin
         </Text>
@@ -371,9 +516,9 @@ export function App() {
           {cfg.jellyfinUploadDir}
         </Text>
       </Text>
-      <Text dimColor>config {loaded.path}</Text>
+      <Text dimColor wrap="truncate-end">config {loaded.path}</Text>
       {phase !== 'setup' && !cfg.jellyfinApiKey && (
-        <Text color="yellow">
+        <Text color="yellow" wrap="truncate-end">
           jellyfin api key missing: set YTJ_JELLYFIN_API_KEY or edit the config file
         </Text>
       )}
@@ -407,7 +552,7 @@ export function App() {
       ) : phase === 'urls' ? (
         <Box flexDirection="column" marginTop={1}>
           {items.map((item, index) => (
-            <Text key={item.url}>
+            <Text key={item.url} wrap="truncate-end">
               {index + 1}. {item.url}
             </Text>
           ))}
@@ -425,7 +570,7 @@ export function App() {
       ) : (
         <Box flexDirection="column" marginTop={1}>
           {items.map((item, index) => (
-            <Text key={item.url} color={statusColor(item.status)}>
+            <Text key={item.url} color={statusColor(item.status)} wrap="truncate-end">
               {statusIcon(item.status)} {index + 1}. {item.title || item.url}
               <Text dimColor>{'  '}{statusText(item)}</Text>
             </Text>
@@ -435,7 +580,7 @@ export function App() {
 
       {phase === 'review' && current && current.status !== 'uploaded' && (
         <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={1}>
-          <Text dimColor>{current.url}</Text>
+          <Text dimColor wrap="truncate-end">{current.url}</Text>
           {FIELD_ORDER.map((name, index) => (
             <Box key={name}>
               <Box width={9}>
@@ -452,13 +597,61 @@ export function App() {
               )}
             </Box>
           ))}
+          <Box>
+            <Box width={9}>
+              <Text color={fieldIndex === FIELD_ORDER.length ? 'green' : undefined}>Art</Text>
+            </Box>
+            <Text dimColor={!current.art || artLoading} wrap="truncate-end">
+              {artLoading
+                ? 'searching artwork...'
+                : current.art
+                  ? `${current.art.label} · ${current.art.detail}`
+                  : 'none'}
+            </Text>
+            {fieldIndex === FIELD_ORDER.length && (
+              <Text dimColor>
+                {'  '}
+                {!inlinePreview
+                  ? 'terminal has no inline images'
+                  : cardsFit
+                    ? 'left/right picks'
+                    : 'window too small for cards'}
+              </Text>
+            )}
+          </Box>
+          {cardsFit && <Box height={artRows} />}
           <Text dimColor>
             {current.status === 'uploading'
               ? 'uploading...'
               : busy
                 ? 'refreshing library...'
-                : 'tab/shift+tab moves field · enter saves and uploads · esc skips track'}
+                : 'tab/shift+tab moves field · enter on Art saves and uploads · esc skips track'}
           </Text>
+          {fieldIndex === FIELD_ORDER.length && !cardsFit && (
+            <Box flexDirection="column" marginTop={1}>
+              {artLoading ? (
+                <Text>searching artwork...</Text>
+              ) : (
+                <>
+                  {artCandidates.map((candidate) => (
+                    <Text
+                      key={candidate.key}
+                      color={candidate.key === current.art?.key ? 'green' : undefined}
+                    >
+                      {candidate.key === current.art?.key ? '> ' : '  '}
+                      {candidate.label}
+                      <Text dimColor>{'  '}{candidate.detail}</Text>
+                    </Text>
+                  ))}
+                  <Text color={current.art ? undefined : 'green'}>
+                    {current.art ? '  ' : '> '}
+                    No picture
+                    <Text dimColor>{'  '}remove the artwork</Text>
+                  </Text>
+                </>
+              )}
+            </Box>
+          )}
         </Box>
       )}
 

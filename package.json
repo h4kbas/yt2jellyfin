@@ -1,6 +1,6 @@
 {
   "name": "yt2jellyfin",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Paste a YouTube URL, download MP3, clean tags, upload to Jellyfin",
   "type": "module",
   "bin": {
@@ -29,6 +29,14 @@
     "typescript": "^5.9.3"
   },
   "author": "h4kbas",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/h4kbas/yt2jellyfin.git"
+  },
+  "homepage": "https://github.com/h4kbas/yt2jellyfin#readme",
+  "bugs": {
+    "url": "https://github.com/h4kbas/yt2jellyfin/issues"
+  },
   "keywords": [
     "jellyfin",
     "youtube",

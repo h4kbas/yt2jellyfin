@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
+import type { ArtCandidate } from './artwork.js';
 import type { Config } from './config.js';
 
 // RemoteUpload plugin: https://github.com/grandguyjs/media-upload-plugin
@@ -151,6 +152,13 @@ type ItemDto = {
   ProviderIds?: Record<string, string>;
 };
 
+export type UploadTrack = {
+  file: string;
+  title: string;
+  // picked in the review box, absent means no artwork at all
+  art?: ArtCandidate | null;
+};
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
@@ -206,30 +214,62 @@ async function addDefaultTag(cfg: Config, item: ItemDto): Promise<boolean> {
   return true;
 }
 
-// The scan runs in the background, so the item can take a while to show up.
-export async function tagUploadedFiles(
+// Jellyfin decodes the request body from base64 for SetItemImage.
+async function uploadPrimaryImage(
   cfg: Config,
-  tracks: { file: string; title: string }[],
-): Promise<{ tagged: number; missed: number }> {
+  itemId: string,
+  bytes: Buffer,
+  mime: string,
+): Promise<boolean> {
+  const response = await fetch(apiUrl(cfg, `/Items/${itemId}/Images/Primary`), {
+    method: 'POST',
+    headers: { ...authHeaders(cfg), 'Content-Type': mime },
+    body: bytes.toString('base64'),
+  });
+
+  return response.ok;
+}
+
+async function deletePrimaryImage(cfg: Config, itemId: string): Promise<void> {
+  await fetch(apiUrl(cfg, `/Items/${itemId}/Images/Primary`), {
+    method: 'DELETE',
+    headers: authHeaders(cfg),
+  });
+}
+
+// The scan runs in the background, so the item can take a while to show up.
+export async function finishUploads(
+  cfg: Config,
+  tracks: UploadTrack[],
+): Promise<{ tagged: number; art: number; missed: number }> {
   requireApiKey(cfg);
 
   const pending = [...tracks];
   const deadline = Date.now() + TAG_TIMEOUT_MS;
   let tagged = 0;
+  let art = 0;
 
   while (pending.length > 0 && Date.now() < deadline) {
     for (let index = pending.length - 1; index >= 0; index--) {
-      const item = await findUploadedItem(cfg, pending[index].file, pending[index].title);
+      const track = pending[index];
+      const item = await findUploadedItem(cfg, track.file, track.title);
       if (!item) continue;
 
-      const added = await addDefaultTag(cfg, item);
+      if (await addDefaultTag(cfg, item)) tagged += 1;
+
+      if (track.art?.source === 'coverart') {
+        if (await uploadPrimaryImage(cfg, item.Id, track.art.bytes, track.art.mime)) art += 1;
+      } else if (!track.art) {
+        // no pick means no picture; the scan may still have pulled the mp3 thumbnail
+        await deletePrimaryImage(cfg, item.Id);
+      }
+
       pending.splice(index, 1);
-      if (added) tagged += 1;
     }
 
     if (pending.length === 0) break;
     await sleep(TAG_POLL_MS);
   }
 
-  return { tagged, missed: pending.length };
+  return { tagged, art, missed: pending.length };
 }

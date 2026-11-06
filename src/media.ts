@@ -36,6 +36,7 @@ export async function applyTags(
   cfg: Config,
   file: string,
   values: TagValues,
+  keepArt: boolean,
 ): Promise<string> {
   const target = join(dirname(file), trackFileName(values.title, values.artist));
   const temp = `${file}.tagged.mp3`;
@@ -44,8 +45,9 @@ export async function applyTags(
     '-y',
     '-i',
     file,
+    // -map 0:a drops the attached picture when no artwork was picked
     '-map',
-    '0',
+    keepArt ? '0' : '0:a',
     '-c',
     'copy',
     '-map_metadata',
