@@ -41,8 +41,10 @@ function apiUrl(cfg: Config, path: string): string {
   return `${cfg.jellyfinUrl.replace(/\/+$/, '')}${path}`;
 }
 
+// Jellyfin 12 dropped the X-Emby-Token header (401); only the MediaBrowser
+// Authorization scheme authenticates now.
 function authHeaders(cfg: Config): Record<string, string> {
-  return { 'X-Emby-Token': cfg.jellyfinApiKey };
+  return { Authorization: `MediaBrowser Token="${cfg.jellyfinApiKey}"` };
 }
 
 function requireApiKey(cfg: Config): void {
