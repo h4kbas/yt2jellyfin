@@ -33,6 +33,10 @@ export function supportsInlineImages(): boolean {
   const program = process.env.TERM_PROGRAM ?? '';
   const term = process.env.TERM ?? '';
 
+  // tmux does not sync its cursor to the outer terminal before passthrough
+  // chunks run, images land in the wrong cells
+  if (process.env.TMUX !== undefined) return false;
+
   if (['WezTerm', 'iTerm.app', 'ghostty', 'kitty'].includes(program)) return true;
   if (term.includes('kitty')) return true;
 
@@ -88,8 +92,8 @@ function clearRows(grid: Grid): string {
   return sequence;
 }
 
-export function clearPreview(): void {
-  if (lastGrid === null) return;
+export function clearPreview(): boolean {
+  if (lastGrid === null) return false;
 
   let sequence = '\x1b[s';
   for (const imageId of lastImageIds) sequence += deleteImage(imageId);
@@ -98,6 +102,7 @@ export function clearPreview(): void {
 
   lastGrid = null;
   lastImageIds = [];
+  return true;
 }
 
 function displayImage(png: Buffer, row: number, col: number, cols: number, rows: number): string {
@@ -112,7 +117,10 @@ function displayImage(png: Buffer, row: number, col: number, cols: number, rows:
     const params = first
       ? `f=100,a=T,t=d,C=1,i=${imageId},c=${cols},r=${rows}${last ? '' : ',m=1'}`
       : `m=${last ? 0 : 1}`;
-    sequence += wrap(`\x1b_G${params};${chunk}\x1b\\`);
+    const graphics = `\x1b_G${params};${chunk}\x1b\\`;
+    // tmux does not sync its cursor to the outer terminal before a passthrough
+    // chunk runs, so move the real cursor from inside the wrapper
+    sequence += wrap(first ? `\x1b[${row};${col}H${graphics}` : graphics);
     first = false;
   }
 

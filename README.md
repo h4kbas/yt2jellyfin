@@ -16,13 +16,17 @@ Each track opens a tag box, prefilled from yt-dlp metadata:
 
 ![review and fix tags](https://raw.githubusercontent.com/h4kbas/yt2jellyfin/master/screenshots/3-review.png)
 
-`enter` on the last field tags and uploads through the plugin:
+`tab` to the Art field to pick artwork next to the form: the mp3 thumbnail, Cover Art Archive covers for the album, or iTunes matches. `left`/`right` picks, `enter` saves and uploads:
 
-![uploading](https://raw.githubusercontent.com/h4kbas/yt2jellyfin/master/screenshots/4-uploading.png)
+![pick artwork](https://raw.githubusercontent.com/h4kbas/yt2jellyfin/master/screenshots/4-artwork.png)
+
+Tags are written to the mp3, artwork is applied to the Jellyfin item, then the file is uploaded through the plugin:
+
+![uploading](https://raw.githubusercontent.com/h4kbas/yt2jellyfin/master/screenshots/5-uploading.png)
 
 When the queue empties the library refresh is triggered:
 
-![done, library scan started](https://raw.githubusercontent.com/h4kbas/yt2jellyfin/master/screenshots/5-done.png)
+![done, library scan started](https://raw.githubusercontent.com/h4kbas/yt2jellyfin/master/screenshots/6-done.png)
 
 ## Install
 
@@ -49,7 +53,7 @@ pnpm build && node dist/index.js
 
 First run opens a setup screen with prefilled defaults (jellyfin url, upload dir, yt-dlp/ffmpeg paths); enter through the fields and it writes the config. A missing or broken config file shows the same screen again.
 
-Flow: `enter` adds a url, `enter` on an empty line downloads all, then each track opens a review box. `tab`/`shift+tab` move between fields, `enter` on the last field saves tags and uploads, `esc` skips. When the queue empties the library refresh is triggered.
+Flow: `enter` adds a url, `enter` on an empty line downloads all, then each track opens a review box. `tab`/`shift+tab` move between fields (the last one is Art), `enter` on Art saves tags, artwork and uploads, `esc` skips. Artwork comes from the embedded YouTube thumbnail, Cover Art Archive and iTunes; leaving Art unpicked means no artwork. When the queue empties the library refresh is triggered.
 
 ## Config
 

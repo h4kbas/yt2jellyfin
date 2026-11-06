@@ -51,6 +51,10 @@ const FIELD_LABELS: Record<keyof Fields, string> = {
   genre: 'Genre',
 };
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -112,6 +116,8 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [artLoading, setArtLoading] = useState(false);
   const [artCandidates, setArtCandidates] = useState<ArtCandidate[]>([]);
+  // bumping this repaints the frame after the card overlay is erased
+  const [, setPreviewVersion] = useState(0);
 
   const urlsRef = useRef<string[]>([]);
   const busyRef = useRef(false);
@@ -270,6 +276,7 @@ export function App() {
     );
 
     if (next !== -1) {
+      clearPreview();
       setReviewIndex(next);
       setFieldIndex(0);
       return;
@@ -302,6 +309,7 @@ export function App() {
 
   async function acceptAndUpload() {
     if (busyRef.current) return;
+    clearPreview();
 
     const index = reviewIndex;
     const item = itemsRef.current[index];
@@ -364,6 +372,8 @@ export function App() {
     if (phase !== 'review') return;
 
     if (key.tab) {
+      // erase the card overlay before Ink paints a shorter box over it
+      clearPreview();
       const delta = key.shift ? -1 : 1;
       setFieldIndex(
         (prev) => (prev + delta + FIELD_ORDER.length + 1) % (FIELD_ORDER.length + 1),
@@ -372,6 +382,7 @@ export function App() {
     }
 
     if (fieldIndex === FIELD_ORDER.length && key.return) {
+      clearPreview();
       void acceptAndUpload();
       return;
     }
@@ -391,6 +402,7 @@ export function App() {
     if (key.escape) {
       const item = itemsRef.current[reviewIndex];
       if (!item || item.status !== 'downloaded') return;
+      clearPreview();
       updateItem(reviewIndex, { status: 'error', error: 'skipped' });
       void advance(reviewIndex);
     }
@@ -443,13 +455,23 @@ export function App() {
     const timer = setTimeout(() => {
       void (async () => {
         try {
-          const candidates = await loadArtCandidates(cfg, {
-            file: item.file as string,
-            title: item.title,
-            album: item.album,
-            artist: item.artist,
-          });
+          const load = () =>
+            loadArtCandidates(cfg, {
+              file: item.file as string,
+              title: item.title,
+              album: item.album,
+              artist: item.artist,
+            });
+          let candidates = await load();
           if (cancelled) return;
+
+          // providers occasionally rate limit, one retry is enough
+          if (candidates.length === 0) {
+            await sleep(1500);
+            if (cancelled) return;
+            candidates = await load();
+            if (cancelled) return;
+          }
 
           const pngs = new Map<string, Buffer>();
           await Promise.all(
@@ -483,7 +505,9 @@ export function App() {
   // Ink repaints the whole frame on every keystroke, so redraw the cards after it
   useEffect(() => {
     if (!cardsFit) {
-      clearPreview();
+      // erasing the overlay can wipe rows Ink just painted (the box shrinks
+      // when the cards close), so repaint the frame once afterwards
+      if (clearPreview()) setPreviewVersion((version) => version + 1);
       return;
     }
 
@@ -501,7 +525,12 @@ export function App() {
     drawCardPicker(cards, selected === -1 ? artCandidates.length : selected, cardsTop);
   });
 
-  useEffect(() => () => clearPreview(), []);
+  useEffect(
+    () => () => {
+      clearPreview();
+    },
+    [],
+  );
 
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -608,7 +637,7 @@ export function App() {
                   ? `${current.art.label} · ${current.art.detail}`
                   : 'none'}
             </Text>
-            {fieldIndex === FIELD_ORDER.length && (
+            {fieldIndex === FIELD_ORDER.length && current.status === 'downloaded' && (
               <Text dimColor>
                 {'  '}
                 {!inlinePreview
