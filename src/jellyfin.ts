@@ -7,6 +7,34 @@ const REMOTE_UPLOAD_PLUGIN_ID = 'b5a2d6b3-c5f4-4f88-aed4-5f3e9877d0a6';
 // The plugin's own client uploads 28MB chunks; keep the same size so a reverse
 // proxy sized for it (30MB body) also works here.
 const UPLOAD_CHUNK_SIZE = 28 * 1024 * 1024;
+// Marks tracks that came in through the YouTube flow so they can be filtered
+// by tag in Jellyfin. Written after the scan indexes the uploaded file.
+const DEFAULT_TAG = 'YouTube';
+const TAG_TIMEOUT_MS = 60_000;
+const TAG_POLL_MS = 2_000;
+// UpdateItem needs ProviderIds present, the server throws on a null map. Ask for
+// every editable field so posting the item back keeps the metadata it already has.
+const ITEM_FIELDS = [
+  'Path',
+  'Tags',
+  'Genres',
+  'Overview',
+  'ProviderIds',
+  'Studios',
+  'Taglines',
+  'People',
+  'ProductionYear',
+  'PremiereDate',
+  'EndDate',
+  'OfficialRating',
+  'CustomRating',
+  'ForcedSortName',
+  'OriginalTitle',
+  'IndexNumber',
+  'ParentIndexNumber',
+  'CriticRating',
+  'CommunityRating',
+].join(',');
 
 function apiUrl(cfg: Config, path: string): string {
   return `${cfg.jellyfinUrl.replace(/\/+$/, '')}${path}`;
@@ -114,4 +142,94 @@ export async function refreshLibrary(cfg: Config): Promise<void> {
     const body = await response.text();
     throw new Error(`jellyfin refresh failed (${response.status}): ${body}`);
   }
+}
+
+type ItemDto = {
+  Id: string;
+  Path?: string;
+  Tags?: string[];
+  ProviderIds?: Record<string, string>;
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+
+// Uploads land on the server as <uploadDir>/<file name>; match on that instead of
+// the title, which the user may have edited in the review box. The title is only
+// used for the search: the file name has the artist prefixed and search is a
+// substring match on the item name.
+async function findUploadedItem(
+  cfg: Config,
+  file: string,
+  title: string,
+): Promise<ItemDto | null> {
+  const name = basename(file);
+  const params = new URLSearchParams({
+    Recursive: 'true',
+    IncludeItemTypes: 'Audio',
+    SearchTerm: title.trim() || name.replace(/\.mp3$/i, ''),
+    Fields: ITEM_FIELDS,
+    Limit: '20',
+  });
+
+  const response = await fetch(apiUrl(cfg, `/Items?${params}`), { headers: authHeaders(cfg) });
+  if (!response.ok) {
+    throw new Error(`jellyfin item lookup failed (${response.status})`);
+  }
+
+  const body = (await response.json()) as { Items?: ItemDto[] };
+  return (body.Items ?? []).find((item) => basename(item.Path ?? '') === name) ?? null;
+}
+
+async function addDefaultTag(cfg: Config, item: ItemDto): Promise<boolean> {
+  const tags = Array.isArray(item.Tags) ? item.Tags : [];
+  if (tags.includes(DEFAULT_TAG)) return false;
+
+  const body: ItemDto = {
+    ...item,
+    Tags: [...tags, DEFAULT_TAG],
+    ProviderIds: item.ProviderIds ?? {},
+  };
+
+  const response = await fetch(apiUrl(cfg, `/Items/${item.Id}`), {
+    method: 'POST',
+    headers: { ...authHeaders(cfg), 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const message = (await response.text()).trim();
+    throw new Error(`jellyfin tag update failed (${response.status}): ${message || 'no body'}`);
+  }
+
+  return true;
+}
+
+// The scan runs in the background, so the item can take a while to show up.
+export async function tagUploadedFiles(
+  cfg: Config,
+  tracks: { file: string; title: string }[],
+): Promise<{ tagged: number; missed: number }> {
+  requireApiKey(cfg);
+
+  const pending = [...tracks];
+  const deadline = Date.now() + TAG_TIMEOUT_MS;
+  let tagged = 0;
+
+  while (pending.length > 0 && Date.now() < deadline) {
+    for (let index = pending.length - 1; index >= 0; index--) {
+      const item = await findUploadedItem(cfg, pending[index].file, pending[index].title);
+      if (!item) continue;
+
+      const added = await addDefaultTag(cfg, item);
+      pending.splice(index, 1);
+      if (added) tagged += 1;
+    }
+
+    if (pending.length === 0) break;
+    await sleep(TAG_POLL_MS);
+  }
+
+  return { tagged, missed: pending.length };
 }

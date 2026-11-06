@@ -37,6 +37,8 @@ export function downloadTrack(
       '--no-playlist',
       '--newline',
       '--no-warnings',
+      // --print turns progress off, force it back so the TUI can show percentages
+      '--progress',
       '--print',
       `before_dl:${META_PREFIX}%(.{id,title,artist,album,genre,track,uploader,channel})j`,
       '--progress-template',

@@ -5,7 +5,7 @@ import TextInput from 'ink-text-input';
 import { loadConfig, saveConfig, type Config } from './config.js';
 import { downloadTrack, type TrackMeta } from './ytdlp.js';
 import { applyTags } from './media.js';
-import { refreshLibrary, uploadToServer } from './jellyfin.js';
+import { refreshLibrary, tagUploadedFiles, uploadToServer } from './jellyfin.js';
 
 type Status = 'queued' | 'downloading' | 'downloaded' | 'uploading' | 'uploaded' | 'error';
 
@@ -260,7 +260,15 @@ export function App() {
 
     try {
       await refreshLibrary(cfg);
-      setMessage('upload done, library scan started');
+      const tracks = itemsRef.current
+        .filter((item) => item.status === 'uploaded' && item.file)
+        .map((item) => ({ file: item.file as string, title: item.title }));
+      const { missed } = await tagUploadedFiles(cfg, tracks);
+      setMessage(
+        missed > 0
+          ? `upload done, library scan started, YouTube tag missed on ${missed}`
+          : 'upload done, YouTube tag added, library scan started',
+      );
     } catch (error) {
       setMessage(`upload done, refresh failed: ${errorMessage(error)}`);
     }
