@@ -37,7 +37,7 @@ Asked in the TUI on first run, saved to `~/.config/yt2jellyfin/config.json` (mod
 {
   "jellyfinUrl": "http://media.example.com:8096",
   "jellyfinApiKey": "",
-  "jellyfinUploadDir": "/media/music/YouTube",
+  "jellyfinUploadDir": "/data/music/YouTube",
   "downloadDir": "~/Music/yt2jellyfin",
   "ytDlpPath": "yt-dlp",
   "ffmpegPath": "ffmpeg"

@@ -92,8 +92,11 @@ export async function uploadToServer(cfg: Config, file: string): Promise<void> {
     });
 
     if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`upload failed (${response.status}): ${body}`);
+      const body = (await response.text()).trim();
+      throw new Error(
+        `upload failed (${response.status}): ${body || 'no body'} ` +
+          `(check that jellyfinUploadDir exists and is writable by the server)`,
+      );
     }
   }
 }

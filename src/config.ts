@@ -16,7 +16,7 @@ const CONFIG_PATH = join(homedir(), '.config', 'yt2jellyfin', 'config.json');
 const DEFAULT_CONFIG: Config = {
   jellyfinUrl: 'http://media.example.com:8096',
   jellyfinApiKey: '',
-  jellyfinUploadDir: '/media/music/YouTube',
+  jellyfinUploadDir: '/data/music/YouTube',
   downloadDir: join(homedir(), 'Music', 'yt2jellyfin'),
   ytDlpPath: 'yt-dlp',
   ffmpegPath: 'ffmpeg',
